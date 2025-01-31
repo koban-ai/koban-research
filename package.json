@@ -1,0 +1,24 @@
+{
+    "name": "koban-research",
+    "module": "src/bin/main.ts",
+    "type": "module",
+    "scripts": {
+        "fmt:fix": "bunx prettier --write .",
+        "dev": "bun src/bin/main.ts"
+    },
+    "devDependencies": {
+        "@types/bun": "^1.2.1",
+        "prettier": "^3.4.2"
+    },
+    "peerDependencies": {
+        "typescript": "^5.7.3"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "^0.36.3",
+        "@pinecone-database/pinecone": "^4.1.0",
+        "dedent": "^1.5.3",
+        "openai": "^4.81.0",
+        "solc-typed-ast": "^18.2.4",
+        "zod": "^3.24.1"
+    }
+}

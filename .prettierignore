@@ -1,0 +1,4 @@
+node_modules/
+audit-code/
+reports/
+.vscode/
