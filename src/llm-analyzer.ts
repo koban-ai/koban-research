@@ -354,7 +354,6 @@ export class LLMAnalyzer {
             Smart contracts may or may not be logically related, so consider the relationship during analysis.
             Here's a list of example vulnerabilities that don't fit our criteria: gas optimizations, code optimizations, documentation style, missing events, missing documentation.
             If you can't find a guaranteed vulnerability, then output - # No vulnerabilities detected.
-            It's important to provide proof of concept for each vulnerability.
             
             I will provide audit specifications, project documentation and code in relevant XML tags.
 

@@ -7,8 +7,6 @@ import OpenAI from "openai";
 import type { ContractMeta } from "./types/metadata";
 import type { AsyncResult } from "./types/result";
 
-// TODO: Change API key
-const PINECONE_API_KEY: string = "";
 const PINECONE_INDEX: string = "koban-research";
 const DB_BATCH_SIZE: number = 100;
 
@@ -18,7 +16,7 @@ export class VectorDbProcessor {
     private openai: OpenAI;
 
     constructor(openai: OpenAI) {
-        this.pc = new Pinecone({ apiKey: PINECONE_API_KEY });
+        this.pc = new Pinecone();
         this.pcIndex = this.pc.index(PINECONE_INDEX);
         this.openai = openai;
     }
