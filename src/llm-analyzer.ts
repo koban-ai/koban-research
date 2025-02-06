@@ -442,4 +442,130 @@ export class LLMAnalyzer {
         console.log(`Report ${reportPath} saved!`);
         return { success: true };
     }
+
+    public async analv1Backtrack(
+        scope: FileScopeExtractor,
+        scopeName: string,
+        vulnDescription: string,
+        maxIters: number,
+        models: [string, string],
+        auditSpecs?: string,
+        docs?: string
+    ): AsyncResult {
+        // 1. Try to detect vulnerabilities N times.
+        const detectionPrompt = dedent`
+            You are solidity smart contracts security researcher and auditor. Try to find medium/high severity vulnerabilities
+            in provided code scope considering audit specs and project docs. A scope may contain a single contract or multiple contracts.
+            Smart contracts may or may not be logically related, so consider the relationship during analysis.
+            Here's a list of example vulnerabilities that don't fit our criteria: gas optimizations, code optimizations, documentation style, missing events, missing documentation.
+            If you can't find a guaranteed vulnerability, then output - # No vulnerabilities detected.
+
+            I will provide audit specifications, project documentation and code in relevant XML tags.
+
+
+            Audit specifications:
+            <auditSpecs>
+            ${auditSpecs === undefined ? "Empty" : auditSpecs}
+            </auditSpecs>
+
+            Project documentation:
+            <projectDocs>
+            ${docs === undefined ? "Empty" : docs}
+            </projectDocs>
+
+            Smart contracts scope:
+            ${scope
+                .getFiles()
+                .entries()
+                .map(
+                    ([filePath, [fileName, code]]) =>
+                        `${fileName}:\n<code>\n${code}\n</code>\n`
+                )
+                .toArray()
+                .join("\n")}
+        `;
+
+        for (let n = 0; n < maxIters; n++) {
+            console.log(`[?][${n + 1}/${maxIters}] Starting iteration`);
+
+            // 1. Try to detect vulnerabilities
+            let llmDetection: string;
+            try {
+                llmDetection =
+                    (
+                        await this.openai.chat.completions.create({
+                            model: models[0],
+                            messages: [
+                                {
+                                    role: "user",
+                                    content: detectionPrompt,
+                                },
+                            ],
+                        })
+                    ).choices[0].message.content || "";
+            } catch (error) {
+                console.error(error);
+                return { success: false };
+            }
+
+            console.log(`[?][${n + 1}/${maxIters}] Trying to validate..`);
+
+            // 2. Try to validate vulnerability by backtrack input data(existing vulnerability)
+            const validationPrompt = dedent`
+                I will provide solidity smart contracts audit report and description of existing vulnerability in XML tags.
+                You need to detect existing vulnerability in audit report. If the same vulnerability detected, output
+                lowercase 'yes' without any quotes. If you can't find same vulnerability, output lowercase 'no' without any quotes.
+                Your available outputs are only 'yes' or 'no' in lowercase without quotes.
+
+
+                Audit report:
+                <auditReport>
+                ${llmDetection}
+                </auditReport>
+
+                Existing vulnerability description:
+                <existingVuln>
+                ${vulnDescription}
+                </existingVuln>
+            `;
+
+            try {
+                const llmResult = await this.openai.chat.completions.create({
+                    model: models[1],
+                    temperature: 0,
+                    messages: [
+                        {
+                            role: "user",
+                            content: validationPrompt,
+                        },
+                    ],
+                });
+                const output = llmResult.choices[0].message.content;
+                const isValidOutput = output === "yes" || output === "no";
+
+                if (!isValidOutput) {
+                    console.error(`Invalid output structure: ${output}`);
+                    return { success: false };
+                }
+
+                if (output === "yes") {
+                    const reportPath = `reports/${scopeName}_validated_${n}.md`;
+                    await writeFile(reportPath, llmDetection);
+
+                    console.log(
+                        `[+][${n + 1}/${maxIters}] I FOUND VALIDATION!, DETECTION SAVED..`
+                    );
+
+                    return { success: true };
+                }
+
+                console.log(`[-][${n + 1}/${maxIters}] No vulnerabilities :(`);
+            } catch (error) {
+                console.error(error);
+                return { success: false };
+            }
+        }
+
+        return { success: true };
+    }
 }

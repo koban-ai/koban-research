@@ -300,13 +300,26 @@ const main = async () => {
         },
     ];
 
+    const ecoProtocolScopeFiles = [
+        // Token
+        "audit-code/2023-05-ecoprotocol/op-eco/contracts/token/TokenInitial.sol",
+        "audit-code/2023-05-ecoprotocol/op-eco/contracts/token/L2ECO.sol",
+        "audit-code/2023-05-ecoprotocol/op-eco/contracts/token/ERC20Upgradeable.sol",
+
+        // Bridge
+        "audit-code/2023-05-ecoprotocol/op-eco/contracts/bridge/CrossDomainEnabledUpgradeable.sol",
+        "audit-code/2023-05-ecoprotocol/op-eco/contracts/bridge/InitialBridge.sol",
+        "audit-code/2023-05-ecoprotocol/op-eco/contracts/bridge/L1ECOBridge.sol",
+        "audit-code/2023-05-ecoprotocol/op-eco/contracts/bridge/L2ECOBridge.sol",
+    ];
+
     // 1. Extract scope data
-    /* const scopeResult = await FileScopeExtractor.load(peapodsScopeFiles);
+    const scopeResult = await FileScopeExtractor.load(ecoProtocolScopeFiles);
     if (!scopeResult.success) {
         console.error("Can't load scope");
         return;
     }
-    const scope = scopeResult.return; */
+    const scope = scopeResult.return;
 
     /* const targetContractsResult = scope.getContracts([
         // "SafeERC20",
@@ -349,7 +362,7 @@ const main = async () => {
     // TODO: 3. Start LLM scope analysis
     const llmAnalyzer = new LLMAnalyzer(openai, vectorDb);
 
-    for (const dvdScope of dvdFullScopeFiles) {
+    /* for (const dvdScope of dvdFullScopeFiles) {
         console.log(`[?] Loading.. ${dvdScope.name}`);
 
         const scopeResult = await FileScopeExtractor.load(dvdScope.files);
@@ -367,40 +380,69 @@ const main = async () => {
             dvdScope.specs,
             dvdScope.description
         );
-    }
+    } */
 
-    /* await llmAnalyzer.analv1Scope(
+    await llmAnalyzer.analv1Backtrack(
         scope,
-        `Peapods-${0}`,
+        "eco",
         dedent`
-                Q: Are there any limitations on values set by admins (or other roles) in the codebase, including restrictions on array lengths?
-                A: For all access-controlled functions we have validations on restricting values at the beginning of the setters, so refer to those.
-    
-                Q: Are there any limitations on values set by admins (or other roles) in protocols you integrate with, including restrictions on array lengths?
-                A: No
-    
-                Q: Is the codebase expected to comply with any specific EIPs?
-                A: Many of our contracts implement ERC20 and ERC4626 which we attempt to comply with in the entirety of those standards for contracts that implement them.
-    
-                Q: Are there any off-chain mechanisms involved in the protocol (e.g., keeper bots, arbitrage bots, etc.)? We assume these mechanisms will not misbehave, delay, or go offline unless otherwise specified.
-                A: Our protocol and its value proposition assumes the existence of arbitrage bots across markets. We have some partners we work with for them to implement their arbitrage bots to keep market prices across assets in sync (and drive the protocol flywheel ultimately). We will also have liquidations for our fraxlend fork implementation, which can be executed by either bots we create or third parties (liquidations are not restricted to anyone in particular).
-    
-                Q: What properties/invariants do you want to hold even if breaking them has a low/unknown impact?
-                A: For all vaults (ERC4626) we have in the system, the best case scenario is the collateral backing ratio (CBR, i.e. ratio of convertToAssets(shares) / shares) of the vault will always increase and never decrease. the scenario where this isn't necessarily the case is if bad debt is accrued on a lending pair. Otherwise outside of the case of bad debt we expect this CBR to only go upwards over time.
-    
-                Q: Please discuss any design choices you made.
-                A: The main consideration for a design choice we made is in a few places we implement unlimited (100%) slippage for dex swaps. Our expectation is wherever we implement this behavior that almost any swap from token0 to token1 will be of small enough value that it would rarely, if ever, be profitable to sandwich for profit by a bot.
-    
-                Additional audit information:
-                Our codebases have a lot of intertwined protocols and integrations, however the most critical are going to be ensuring
-                WeightedIndex.sol, which is our core pod contract, is very secure as it will custody the most funds in the protocol
-                StakingPoolToken.sol and AutoCompoundingPodLp.sol also custody a lot of funds so ensuring there are no exploit vectors is critical
-                LeverageManager.sol contains the entry points addLeverage and removeLeverage where users will lever up and down their podded tokens and ultimately interact with the fraxlend fork to borrow funds among other things. There is a lot of underlying and somewhat complicated logic here but we want to make sure these two entry points are very secure and no vectors exist to drain funds.
-            `,
+            # Stale inflationMultiplier in L1ECOBridge
+
+            ## Severity:
+            - High
+
+            ## Summary:
+            L1ECOBridge::inflationMultiplier is updated through L1ECOBridge::rebase on Ethereum, and it is used in _initiateERC20Deposit and finalizeERC20Withdrawal to convert between token amount and _gonsAmount. However, if rebase is not called in a timely manner, the inflationMultiplier value can be stale and inconsistent with the value of L1 ECO token during transfer, leading to incorrect token amounts in deposit and withdraw.
+
+            ## Vulnerability Detail:
+            The inflationMultiplier value is updated in rebase with an independent transaction on L1 as shown below:
+            \`\`\`solidity
+            function rebase(uint32 _l2Gas) external {
+                inflationMultiplier = IECO(l1Eco).getPastLinearInflation(block.number);
+            \`\`\`
+            However, in both _initiateERC20Deposit, transferFrom is called before the inflationMultiplier is used, which can lead to inconsistent results if rebase is not called on time for the inflationMultiplier to be updated. The code snippet for _initiateERC20Deposit is as follows:
+            \`\`\`solidity
+                IECO(_l1Token).transferFrom(_from, address(this), _amount);
+                _amount = _amount * inflationMultiplier;
+            \`\`\`
+            finalizeERC20Withdrawal has the same problem.
+            \`\`\`solidity
+                uint256 _amount = _gonsAmount / inflationMultiplier;
+                bytes memory _ecoTransferMessage = abi.encodeWithSelector(IERC20.transfer.selector,_to,_amount);
+            \`\`\`
+            The same problem does not exist in L2ECOBridge. Because the L2 rebase function updates inflationMultiplier and rebase l2Eco token synchronously.
+            \`\`\`solidity
+                function rebase(uint256 _inflationMultiplier)
+                external
+                virtual
+                onlyFromCrossDomainAccount(l1TokenBridge)
+                validRebaseMultiplier(_inflationMultiplier)
+            {
+                inflationMultiplier = _inflationMultiplier;
+                l2Eco.rebase(_inflationMultiplier);
+                emit RebaseInitiated(_inflationMultiplier);
+            }
+            \`\`\`
+
+            ## Impact:
+            The attacker can steal tokens with this.
+            
+            He can deposit to L1 bridge when he observes a stale larger value and he will receive more tokens on L2.
+
+            ## Recommendation:
+            Calling IECO(l1Eco).getPastLinearInflation(block.number) instead of using inflationMultiplier.
+        `,
+        100,
+        ["o1-preview", "chatgpt-4o-latest"],
+        undefined,
         dedent`
-                Peapods has pioneered trustless and permissionless real yield generation by farming crypto market's only constant, volatility. We are expanding this concept by building leveraged volatility farming (LVF), where farmers and suppliers maximize real yield on their capital with improved capital efficiency and minimizing risk through soft leverage.
-            `
-    ); */
+            Eco enables any onchain action to be a simple, one-click stablesend. With Eco, apps can easily accept anyone’s preferred stablecoin, regardless of the network — unlocking stablecoin liquidity from any connected chain and giving users the simplest onchain experience. To make this possible, the Eco Protocol brings together Routes, Accounts, and Crowd Liquidity (coming soon) to give app developers the ultimate flexibility while prioritizing speed, cost, and security.
+
+            To make transaction costs negligible, minimize the number of necessary user actions, and avoid introducing centralized dependencies, Eco focuses on a singular, opinionated use case: fast, cheap, single-click stablecoin transaction execution anywhere across Ethereum (and eventually beyond). Eco is designed on the premise that stablecoins are the most intuitive and interoperable asset to bring users onchain. Eco makes it as fast and easy as possible for onchain app developers to attract stablecoin liquidity, price onchain actions in everyday currencies, and enable one-click sends to any supported chain or application.
+
+            Eco Routes provide developers with secure and cheap token transfer pathways between any other rollup settling on Ethereum (L2 or L3), with a network of fillers providing on-demand liquidity. Eco Accounts provides developers with a seamless way to manage cross-chain accounts with chain-abstracted balances, making it easy to support cross-chain interactions. The Eco Network will eventually aggregate liquidity to make it easy for app developers to provide users with more intuitive and cost-minimized onchain experiences denominated in stablecoins.
+        `
+    );
 };
 
 main().catch(console.error);
