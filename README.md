@@ -12,7 +12,7 @@ This project at early concept stage. Everything in this repo is subject to chang
 ## Architecture
 For the demonstration, we use a simple `[Agents..] -> Aggregator` architecture. We generate N queries to different LLMs, analyze the responses and aggregate them through an additional call to the `Aggregator` or `Synthesizer`, it identifies the most likely vulnerabilities.
 
-With good prompt optimization, `o1-preview` model is able to identify vulnerabilities in real-world [contests](./reports/eco/) and production.
+With good prompt optimization, `o1-preview` model is able to identify vulnerabilities in real-world [contests](./reports/eco-protocol/) and production.
 
 ![Architecture](./assets/arch.jpg)
 
