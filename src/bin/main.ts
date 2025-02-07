@@ -327,13 +327,42 @@ const main = async () => {
         "audit-code/2024-04-alchemix/v2-foundry/src/utils/collectors/OptimismRewardCollector.sol",
     ];
 
+    const gammaScopeFiles = [
+        "audit-code/2024-05-gamma-staking/StakingV2/src/Lock.sol",
+
+        "audit-code/2024-05-gamma-staking/StakingV2/src/interfaces/ILock.sol",
+        "audit-code/2024-05-gamma-staking/StakingV2/src/interfaces/ILockList.sol",
+
+        "audit-code/2024-05-gamma-staking/StakingV2/src/libraries/AddressPagination.sol",
+        "audit-code/2024-05-gamma-staking/StakingV2/src/libraries/LockList.sol",
+    ];
+
+    const hatsProtocolScopeFiles = [
+        "audit-code/2024-11-hats-protocol/hats-zodiac/src/HatsSignerGate.sol",
+
+        "audit-code/2024-11-hats-protocol/hats-zodiac/src/interfaces/IHatsSignerGate.sol",
+
+        "audit-code/2024-11-hats-protocol/hats-zodiac/src/lib/SafeManagerLib.sol",
+        "audit-code/2024-11-hats-protocol/hats-zodiac/src/lib/zodiac-modified/ModifierUnowned.sol",
+        "audit-code/2024-11-hats-protocol/hats-zodiac/src/lib/zodiac-modified/GuardableUnowned.sol",
+    ];
+
     // 1. Extract scope data
-    const scopeResult = await FileScopeExtractor.load(alchemixScopeFiles);
-    if (!scopeResult.success) {
+    const gammaScopeResult = await FileScopeExtractor.load(gammaScopeFiles);
+    if (!gammaScopeResult.success) {
         console.error("Can't load scope");
         return;
     }
-    const scope = scopeResult.return;
+    const gammaScope = gammaScopeResult.return;
+
+    const hatsScopeResult = await FileScopeExtractor.load(
+        hatsProtocolScopeFiles
+    );
+    if (!hatsScopeResult.success) {
+        console.error("Can't load scope");
+        return;
+    }
+    const hatsScope = hatsScopeResult.return;
 
     /* const targetContractsResult = scope.getContracts([
         // "SafeERC20",
@@ -397,8 +426,131 @@ const main = async () => {
         );
     } */
 
+    // Hats
+    const hatsTask = await llmAnalyzer.analv1Backtrack(
+        hatsScope,
+        "hats",
+        dedent`
+            # Detaching HSG when there's non-unregistered owners who no longer own the hat would give them control over the multi-sig
+
+            ## Severity:
+            - High
+
+            ## Summary:
+            After a user no longer owns a hat, although they are no longer treated as a valid signer, they remain an owner within the Safe, until removeSigner is called
+
+            \`\`\`solidity
+            function detachHSG() public {
+                _checkUnlocked();
+                _checkOwner();
+                ISafe s = safe; // save SLOAD
+
+                // first remove as guard, then as module
+                s.execRemoveHSGAsGuard();
+                s.execDisableHSGAsOnlyModule();
+                emit Detached();
+            }
+            \`\`\`
+
+            When HSG is detached, it does not check if there's any Safe owners who no longer wear the necessary hat. For this reason, if there's such owners, they'll remain rights within the multi-sig. Depending on their number, they might be able to overturn the multisig, or at least disallow them to reach quorum.
+
+            However, this attack can further be weaponized if one of the signer hats has admin rights over another signer hat. If the said admin hat wants to overturn the multisig and gain full access of it upon detaching, they can simply front-run the detachHSG call and do a loop of 1) transferring the lower hat to a new address 2) claiming it as a signer. Then, when the detachHSG executes, all of these addresses that the attacker had looped through would be owners of the safe and in most cases that should be enough to fully overturn the multi-sig and claim full custody of it.
+
+            ## Root Cause:
+            detachHSG does not check if there are Safe owners who no longer wear the necessary hat.
+
+            ## Attack Path:
+            1. DAO plans to detach from HSG
+            2. There exists a user who has admin hat over a signer hat which has a set max supply of 1.
+            3. DAO calls detach from HSG
+            4. The admin hat owner front-runs the tx and does a loop of transferring the hat and adding it as a signer. This gives a lot of wallets owner rights within the Safe, which would otherwise be worthless if HSG remains active
+            5. The DAO gets detached and all of the wallets the admin hat owner had looped through now are owners within the Safe
+            6. This would usually give full custody to the attacker, or at the very least guarantee the DAO is not able to execute anything on their own.
+
+            ## Impact:
+            Attacker can gain full custody over a Safe upon HSG detachment
+
+            ## Mitigation:
+            Upon detaching HSG, loop through all Safe owners and in case a wallet does not wear the necessary hat, unregister them as a signer.
+        `,
+        100,
+        ["o1-preview", "chatgpt-4o-latest"],
+        undefined,
+        dedent`
+            HatsSignerGate leverages Hats Protocol to enable DAO-owned Safe multisigs. With HSG, DAOs can safely delegate operations of a Safe multisig to a set of valid Hat-wearing signers without giving up control to the signers.
+        `
+    );
+
+    // Gamma
+    /* const gammaTask = llmAnalyzer.analv1Backtrack(
+        gammaScope,
+        "gamma",
+        dedent`
+            # Integer overflow when calculating rewards
+
+            ## Summary:
+            The protocol uses a Sushi Masterchef like method for maintaining rewards for each user. The cumulatedReward variable is used for keeping track of the accumulated amount of assets per staking token. However, since cumulatedReward is scaled by 1e36, it may lead to overflow during reward calculation.
+
+            ## Vulnerability Detail:
+            Let's see how the reward is calculated:
+
+            1. cumulatedReward is maintained as the cumulative asset/share ratio scaled by 1e36.
+            2. Earned rewards and rewardDebt are calculated by cumulatedReward times the amount of shared token (with multiplier)
+
+            The issue here is cumulatedReward is scaled by 1e36, which is too large, and is susceptible to grief attacks. An example is:
+
+            1. At the beginning of the Lock contract, attacker initially stakes 1 wei of staking token, and deposits 1e18 reward token.
+            2. Attacker calls notifyUnseenReward() to accumulate the reward. The cumulatedReward is now 1e18 * 1e36 / 1 = 1e54.
+            3. Then, when calculating the earned rewards, if anyone has 1e18 staking tokens, the reward calculation (and the reward debt) would be up to 1e54 * 1e18 = 1e72.
+
+            Note that uint256.max is around 1e78, and the limit would be easily hit if the tokens in step 1 and step 3 is 1000e18 instead of 1e18.
+            \`\`\`solidity
+            function _notifyReward(address _rewardToken, uint256 reward) internal {
+                if (lockedSupplyWithMultiplier == 0)
+                    return; // If there is no locked supply with multiplier, exit without adding rewards (prevents division by zero).
+
+                Reward storage r = rewardData[_rewardToken]; // Accesses the reward structure for the specified token.
+        >       uint256 newReward = reward * 1e36 / lockedSupplyWithMultiplier; // Calculates the reward per token, scaled up for precision.
+        >       r.cumulatedReward += newReward; // Updates the cumulative reward for the token.
+                r.lastUpdateTime = block.timestamp; // Sets the last update time to now.
+                r.balance += reward; // Increments the balance of the token by the new reward amount.
+            }
+
+            ...
+
+            function _earned(
+                address _user,
+                address _rewardToken
+            ) internal view returns (uint256 earnings) {
+                Reward memory rewardInfo = rewardData[_rewardToken]; // Retrieves reward data for the specified token.
+                Balances memory balance = balances[_user]; // Retrieves balance information for the user.
+        >       earnings = rewardInfo.cumulatedReward * balance.lockedWithMultiplier - rewardDebt[_user][_rewardToken]; // Calculates earnings by considering the accumulated reward and the reward debt.
+            }
+
+            \`\`\`
+
+            ## Impact:
+            Integer overflow during reward calculation.
+
+            ## Recommendation:
+            Couple of ways for mitigation:
+
+            1. Use 1e12 as scale factor (like in Masterchef) instead of 1e36.
+            2. Since the staking token is always GAMMA (which has 18 decimals) and is currently priced at $0.117, the lockedSupplyWithMultiplier can be initially set to 1e18 to avoid cumulatedReward to be too large. The loss is be negligible for initial stakers.
+            3. Add a minimum staking amount limit (e.g. 1e18).
+        `,
+        100,
+        ["o1-preview", "chatgpt-4o-latest"],
+        undefined,
+        dedent`
+            The locked staking contract allows users to lock an ERC-20 token at various intervals and multipliers and receive fee distributions according to their amounts staked and multipliers.
+        `
+    ); */
+
+    // await Promise.all([hatsTask]);
+
     // Alchemix
-    await llmAnalyzer.analv1Backtrack(
+    /* await llmAnalyzer.analv1Backtrack(
         scope,
         "alchemix",
         dedent`
@@ -483,7 +635,7 @@ const main = async () => {
         dedent`
             Alchemix is a pioneering DeFi platform and community DAO that empowers users to unlock the potential of their assets through Self-Repaying, non-liquidating loans. Alchemix reimagines the traditional lending and borrowing experience, offering a secure and innovative way to balance spending and saving while mitigating liquidation risks.
         `
-    );
+    ); */
 
     // Eco 1st high
     /* await llmAnalyzer.analv1Backtrack(
