@@ -10,6 +10,7 @@ To check the correctness of the found vulnerabilities, we use the `backtracking`
 
 - [damn-vulnerable-defi](./reports/damn-vulnerable-defi/)
 - [eco protocol](./reports/eco-protocol/)
+- [gamma-staking](./reports/gamma-staking/)
 
 ## Architecture
 
