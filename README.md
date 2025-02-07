@@ -2,6 +2,9 @@
 
 Smart AI agent that can detect vulnerabilities in your solidity codebase.
 
+![Frame 1 (8)](https://github.com/user-attachments/assets/31da9ebc-046a-46b4-9d85-e6b91804d3b1)
+
+
 ## Note
 This project at early concept stage. Everything in this repo is subject to change. Nothing is optimized or adjusted to production quality. Just PoC.
 
