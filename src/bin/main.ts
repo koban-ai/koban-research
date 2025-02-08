@@ -347,6 +347,16 @@ const main = async () => {
         "audit-code/2024-11-hats-protocol/hats-zodiac/src/lib/zodiac-modified/GuardableUnowned.sol",
     ];
 
+    const saffronScopeFiles = [
+        "audit-code/2024-08-saffron-finance/lido-fiv/contracts/LidoVault.sol",
+        "audit-code/2024-08-saffron-finance/lido-fiv/contracts/VaultFactory.sol",
+
+        "audit-code/2024-08-saffron-finance/lido-fiv/contracts/interfaces/ILido.sol",
+        "audit-code/2024-08-saffron-finance/lido-fiv/contracts/interfaces/ILidoVault.sol",
+        "audit-code/2024-08-saffron-finance/lido-fiv/contracts/interfaces/ILidoVaultInitializer.sol",
+        "audit-code/2024-08-saffron-finance/lido-fiv/contracts/interfaces/ILidoWithdrawalQueueERC721.sol",
+    ];
+
     // 1. Extract scope data
     const gammaScopeResult = await FileScopeExtractor.load(gammaScopeFiles);
     if (!gammaScopeResult.success) {
@@ -363,6 +373,13 @@ const main = async () => {
         return;
     }
     const hatsScope = hatsScopeResult.return;
+
+    const saffronScopeResult = await FileScopeExtractor.load(saffronScopeFiles);
+    if (!saffronScopeResult.success) {
+        console.error("Can't load scope");
+        return;
+    }
+    const saffronScope = saffronScopeResult.return;
 
     /* const targetContractsResult = scope.getContracts([
         // "SafeERC20",
@@ -427,7 +444,7 @@ const main = async () => {
     } */
 
     // Hats
-    const hatsTask = await llmAnalyzer.analv1Backtrack(
+    const hatsTask = llmAnalyzer.analv1Backtrack(
         hatsScope,
         "hats",
         dedent`
@@ -480,6 +497,50 @@ const main = async () => {
             HatsSignerGate leverages Hats Protocol to enable DAO-owned Safe multisigs. With HSG, DAOs can safely delegate operations of a Safe multisig to a set of valid Hat-wearing signers without giving up control to the signers.
         `
     );
+
+    // Saffron
+    const saffronTask = llmAnalyzer.analv1Backtrack(
+        saffronScope,
+        "saffron",
+        dedent`
+            # totalEarnings is incorrect when withdrawing after ending which will withdraw too many funds leaving the Vault insolvent
+
+            ## Severity:
+            - High
+
+            ## Summary:
+            totalEarnings in LidoVault::vaultEndedWithdraw() is calculated as:
+            \`\`\`solidity
+            uint256 totalEarnings = vaultEndingETHBalance.mulDiv(
+                withdrawnStakingEarningsInStakes, vaultEndingStakesAmount
+            ) - totalProtocolFee + vaultEndedStakingEarnings;
+            \`\`\`
+            The withdrawn shares are scaled to get the total earnings, along with vaultEndedStakingEarnings, which was aquired by getting the liquidity from the remaining shares when LidoVault::finalizeVaultEndedWithdrawals() was called.
+
+            However, totalProtocolFee is not scaled, which means that as the steth eth/shares ratio increases, the protocol fee increases with it, otherwise it will overestimate the totalEarnings, as can be confirmed in the calculations in the POC.
+
+            ## Root Cause:
+            In LidoVault.sol:775, protocolFee is not scaled to the current steth eth/shares. It should be in shares and multiplied by the current exchange rate.
+            In LidoVault.sol:533, protocolFee should be tracked as shares.
+
+            ## Impact:
+            The protocol becomes insolvent.
+
+            ## Mitigation:
+            totalProtocolFee must be tracked as shares in LidoVault.sol:533.
+            \`\`\`solidity
+            totalProtocolFee += lido.getSharesByPooledEth(protocolFee);
+            \`\`\`
+        `,
+        100,
+        ["o1-preview", "chatgpt-4o-latest"],
+        undefined,
+        dedent`
+            Saffron is a DeFi primitive that turns a single source of yield into variable and fixed interest. The Saffron LIDO Vault makes native ETH staking into a fixed interest instrument.
+        `
+    );
+
+    await Promise.all([saffronTask, hatsTask]);
 
     // Gamma
     /* const gammaTask = llmAnalyzer.analv1Backtrack(
