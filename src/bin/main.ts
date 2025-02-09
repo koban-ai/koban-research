@@ -357,6 +357,26 @@ const main = async () => {
         "audit-code/2024-08-saffron-finance/lido-fiv/contracts/interfaces/ILidoWithdrawalQueueERC721.sol",
     ];
 
+    const truflationScopeFiles = [
+        "audit-code/2023-12-truflation/truflation-contracts/src/staking/VirtualStakingRewards.sol",
+        "audit-code/2023-12-truflation/truflation-contracts/src/token/ERC677Token.sol",
+        "audit-code/2023-12-truflation/truflation-contracts/src/token/TfiBurn.sol",
+        "audit-code/2023-12-truflation/truflation-contracts/src/token/TrufMigrator.sol",
+        "audit-code/2023-12-truflation/truflation-contracts/src/token/TrufVesting.sol",
+        "audit-code/2023-12-truflation/truflation-contracts/src/token/TruflationToken.sol",
+        "audit-code/2023-12-truflation/truflation-contracts/src/token/TruflationTokenCCIP.sol",
+        "audit-code/2023-12-truflation/truflation-contracts/src/token/VotingEscrowTruf.sol",
+    ];
+
+    const sophonScopeFiles = [
+        "audit-code/2024-05-sophon/farming-contracts/contracts/farm/SophonFarming.sol",
+        "audit-code/2024-05-sophon/farming-contracts/contracts/farm/SophonFarmingState.sol",
+
+        "audit-code/2024-05-sophon/farming-contracts/contracts/proxies/Proxy2Step.sol",
+        "audit-code/2024-05-sophon/farming-contracts/contracts/proxies/SophonFarmingProxy.sol",
+        "audit-code/2024-05-sophon/farming-contracts/contracts/proxies/Upgradeable2Step.sol",
+    ];
+
     // 1. Extract scope data
     const gammaScopeResult = await FileScopeExtractor.load(gammaScopeFiles);
     if (!gammaScopeResult.success) {
@@ -380,6 +400,21 @@ const main = async () => {
         return;
     }
     const saffronScope = saffronScopeResult.return;
+
+    const truflationScopeResult =
+        await FileScopeExtractor.load(truflationScopeFiles);
+    if (!truflationScopeResult.success) {
+        console.error("Can't load scope");
+        return;
+    }
+    const truflationScope = truflationScopeResult.return;
+
+    const sophonScopeResult = await FileScopeExtractor.load(sophonScopeFiles);
+    if (!sophonScopeResult.success) {
+        console.error("Can't load scope");
+        return;
+    }
+    const sophonScope = sophonScopeResult.return;
 
     /* const targetContractsResult = scope.getContracts([
         // "SafeERC20",
@@ -490,7 +525,7 @@ const main = async () => {
             ## Mitigation:
             Upon detaching HSG, loop through all Safe owners and in case a wallet does not wear the necessary hat, unregister them as a signer.
         `,
-        100,
+        500,
         ["o1-preview", "chatgpt-4o-latest"],
         undefined,
         dedent`
@@ -532,7 +567,7 @@ const main = async () => {
             totalProtocolFee += lido.getSharesByPooledEth(protocolFee);
             \`\`\`
         `,
-        100,
+        500,
         ["o1-preview", "chatgpt-4o-latest"],
         undefined,
         dedent`
@@ -540,7 +575,92 @@ const main = async () => {
         `
     );
 
-    await Promise.all([saffronTask, hatsTask]);
+    // Sophon
+    const sophonTask = llmAnalyzer.analv1Backtrack(
+        sophonScope,
+        "sophon",
+        dedent`
+            # setStartBlock() doesn't change the block at which already existing pools will start accumulating points
+
+            ## Severity:
+            - High
+
+            ## Summary:
+            The function setStartBlock() can be called by the owner to change the block number at which points will start accumulating. When it's called, the block at which already existing pools will start accumulating points will not change. Already existing pools will:
+
+            1. Start accumulating points from the old startBlock if the new startBlock is set after the old one.
+            2. Not accumulate rewards until the old startBlock is reached if the new startBlock is set before the old one.
+
+            ## Vulnerability Detail:
+            This happens because updatePool() considers the pool lastRewardBlock as the block number from which points should start accumulating and setStartBlock() never updates the lastRewardBlock of the already existing pools to the new startBlock.
+
+            ## Impact:
+            When setStartBlock() is called the block at which already existing pools will start accumulating points will not change.
+
+            ## Recommendation:
+            In setStartBlock() loop over all of the existing pools and adjust each pool lastRewardBlock to the new startBlock. Furthermore setStartBlock() should revert if the new startBlock is lower than the current block.number as this would create problems in points distribution accounting if the above fix is implemented.
+        `,
+        500,
+        ["o1-preview", "chatgpt-4o-latest"],
+        undefined,
+        dedent`
+            Sophon, an entertainment-focused hyperchain on ZkSync, is hosting an airdrop process. In this process, anyone can stake certain assets to qualify for a $SOPH airdrop scheduled for Q3, 2024.
+        `
+    );
+
+    // Truflation
+    /* const truflationTask = llmAnalyzer.analv1Backtrack(
+        truflationScope,
+        "truflation",
+        dedent`
+            # In function cancelVesting, the variable userVesting is type of memory, which will cause the assignment to locked to be invalid.
+
+            ## Severity:
+            - High
+
+            ## Summary:
+            In function cancelVesting, the variable userVesting is type of memory, which will cause the assignment to locked to be invalid.
+
+            ## Vulnerability Detail:
+            In function cancelVesting from TrufVesting.sol, there is an assignment to userVesting.locked:
+            \`\`\`solidity
+            UserVesting memory userVesting = userVestings[categoryId][vestingId][user];
+
+            if (lockupId != 0) {
+                veTRUF.unstakeVesting(user, lockupId - 1, true);
+                delete lockupIds[categoryId][vestingId][user];
+                userVesting.locked = 0;
+            }
+            \`\`\`
+            As userVesting is type of memory, userVesting.locked = 0 will be invalid outside the function.
+
+            Later, claimableAmount will be calculated:
+            \`\`\`solidity
+            uint256 claimableAmount = claimable(categoryId, vestingId, user);
+            \`\`\`
+            And in function claimable, the calculation of claimableAmount is related to userVesting.locked.
+            \`\`\`solidity
+            uint256 maxClaimable = userVesting.amount - userVesting.locked;
+            \`\`\`
+
+            Since the previous userVesting.locked = 0 is invalid in function claimable, maxClaimable will be smaller than expected, and the amount that the user can claim will also be less.
+
+            ## Impact:
+            The amount that the user can claim will also be less than expected.
+
+            ## Recommendation:
+            Use storage type
+            \`\`\`solidity
+            UserVesting storage userVesting = userVestings[categoryId][vestingId][user];
+            \`\`\`
+        `,
+        500,
+        ["o1-preview", "chatgpt-4o-latest"],
+        undefined,
+        dedent`The definitive reference point for RWA, Indexes, & Inflation.`
+    ); */
+
+    await Promise.all([saffronTask, sophonTask]);
 
     // Gamma
     /* const gammaTask = llmAnalyzer.analv1Backtrack(

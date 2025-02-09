@@ -8,9 +8,20 @@ Smart AI agent that can detect vulnerabilities in your solidity codebase.
 
 To check the correctness of the found vulnerabilities, we use the `backtracking` mechanism. It allows us to compare previous findings(from real contests by real people) with what our agent produces.
 
-- [damn-vulnerable-defi](./reports/damn-vulnerable-defi/)
-- [eco protocol](./reports/eco-protocol/)
-- [gamma-staking](./reports/gamma-staking/)
+- damn-vulnerable-defi
+    - [Audit](./reports/damn-vulnerable-defi/)
+- eco-protocol
+    - [Audit](./reports/eco-protocol/)
+    - [Contest](https://audits.sherlock.xyz/contests/80?filter=questions)
+- gamma-staking
+    - [Audit](./reports/gamma-staking/)
+    - [Contest](https://audits.sherlock.xyz/contests/330?filter=questions)
+- truflation
+    - [Audit](./reports/truflation/)
+    - [Contest](https://audits.sherlock.xyz/contests/151?filter=questions)
+- hats-protocol
+    - [Audit](./reports/hats-protocol/)
+    - [Contest](https://audits.sherlock.xyz/contests/614?filter=questions)
 
 ## Architecture
 
