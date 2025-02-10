@@ -377,6 +377,19 @@ const main = async () => {
         "audit-code/2024-05-sophon/farming-contracts/contracts/proxies/Upgradeable2Step.sol",
     ];
 
+    const coinbaseScopeFiles = [
+        "audit-code/2024-03-coinbase/src/SmartWallet/MultiOwnable.sol",
+        "audit-code/2024-03-coinbase/src/SmartWallet/ERC1271.sol",
+        "audit-code/2024-03-coinbase/src/SmartWallet/CoinbaseSmartWalletFactory.sol",
+        "audit-code/2024-03-coinbase/src/SmartWallet/CoinbaseSmartWallet.sol",
+
+        "audit-code/2024-03-coinbase/src/WebAuthnSol/WebAuthn.sol",
+
+        "audit-code/2024-03-coinbase/src/FreshCryptoLib/FCL.sol",
+
+        "audit-code/2024-03-coinbase/src/MagicSpend/MagicSpend.sol",
+    ];
+
     // 1. Extract scope data
     const gammaScopeResult = await FileScopeExtractor.load(gammaScopeFiles);
     if (!gammaScopeResult.success) {
@@ -415,6 +428,14 @@ const main = async () => {
         return;
     }
     const sophonScope = sophonScopeResult.return;
+
+    const coinbaseScopeResult =
+        await FileScopeExtractor.load(coinbaseScopeFiles);
+    if (!coinbaseScopeResult.success) {
+        console.error("Can't load scope");
+        return;
+    }
+    const coinbaseScope = coinbaseScopeResult.return;
 
     /* const targetContractsResult = scope.getContracts([
         // "SafeERC20",
@@ -479,7 +500,7 @@ const main = async () => {
     } */
 
     // Hats
-    const hatsTask = llmAnalyzer.analv1Backtrack(
+    /* const hatsTask = llmAnalyzer.analv1Backtrack(
         hatsScope,
         "hats",
         dedent`
@@ -531,10 +552,10 @@ const main = async () => {
         dedent`
             HatsSignerGate leverages Hats Protocol to enable DAO-owned Safe multisigs. With HSG, DAOs can safely delegate operations of a Safe multisig to a set of valid Hat-wearing signers without giving up control to the signers.
         `
-    );
+    ); */
 
     // Saffron
-    const saffronTask = llmAnalyzer.analv1Backtrack(
+    /* const saffronTask = llmAnalyzer.analv1Backtrack(
         saffronScope,
         "saffron",
         dedent`
@@ -573,10 +594,10 @@ const main = async () => {
         dedent`
             Saffron is a DeFi primitive that turns a single source of yield into variable and fixed interest. The Saffron LIDO Vault makes native ETH staking into a fixed interest instrument.
         `
-    );
+    ); */
 
     // Sophon
-    const sophonTask = llmAnalyzer.analv1Backtrack(
+    /* const sophonTask = llmAnalyzer.analv1Backtrack(
         sophonScope,
         "sophon",
         dedent`
@@ -606,7 +627,134 @@ const main = async () => {
         dedent`
             Sophon, an entertainment-focused hyperchain on ZkSync, is hosting an airdrop process. In this process, anyone can stake certain assets to qualify for a $SOPH airdrop scheduled for Q3, 2024.
         `
-    );
+    ); */
+
+    // Coinbase
+    /* await llmAnalyzer.analv1Backtrack(
+        coinbaseScope,
+        "coinbase",
+        dedent`
+            # Users making specific chain account ownership upgrades will likely cause issues when later using cross-chain replay-able ownership upgrades
+
+            ## Lines of code:
+            \`\`\`solidity
+            function removeOwnerAtIndex(uint256 index) public virtual onlyOwner {
+                bytes memory owner = ownerAtIndex(index);
+                if (owner.length == 0) revert NoOwnerAtIndex(index);
+
+                delete _getMultiOwnableStorage().isOwner[owner];
+                delete _getMultiOwnableStorage().ownerAtIndex[index];
+
+                emit RemoveOwner(index, owner);
+            }
+            \`\`\`
+
+            ## Severity:
+            - High
+
+            ## Impact:
+            Users are able to upgrade their account's owners via either directly onto the contract with a regular transaction or via an ERC-4337 EntryPoint transaction calling executeWithoutChainIdValidation. If a user chooses to use a combination of these methods it's very likely that the addresses at a particular ownership index differ across chain. Therefore if a user later calls removeOwnerAtIndex on another chain will end up removing different addresses on different chains. It is unlikely this would be the users intention. The severity of this ranges from minimal (the user can just add the mistakenly removed owner back) or criticial (the user mistakenly removes their only accessible owner on a specific chain, permanently locking the account).
+
+            ## Proof Of Concept:
+            Scenario A: Alice permanently bricks her account on an unused chain:
+
+            1. Alice has a CoinbaseSmartWallet, and uses it on Base, Ethereum & Optimism.
+            2. Alice later decides to add a new owner using a cross-chain executeWithoutChainIdValidation
+            3. Alice later wants to remove the initial owner (index 0) and does so by signing another cross-chain replayable signature.
+            4. Despite it not being her intention anyone could take that signature and replay it on Arbitrum, Avalanche etc as there is no check to stop the user removing the final owner.
+
+            Scenario B: Alice adds owners using both methods and ends up with undesired results
+
+            1. Alice has a CoinbaseSmartWallet, and uses across all chains.
+            2. She has Gnosis Safe's and ERC-6551 token bound accounts on different chains so adds them as owners on those specific chains using execute.
+            3. She then adds a secondary EOA address on all chains using executeWithoutChainIdValidation
+            4. Now if she uses executeWithoutChainIdValidation to call removeOwnerAtInde she will be removing different owners on different chains, which is likely not her intention.
+
+            While more complex scenarios than this might sound bizarre it's important to remember that Alice could be using this smart account for the next N years, only making changes sporadically, and as her ownership mappings across different chains become more out of sync the likelihood of a signifanct error occuring increases.
+
+            ## Recommended Mitigation:
+            As MultiOwnableStorage uses a mapping to track owner information rather than a conventional array, it might be simpler to do away with the indexes entirely and have a removeOwner(bytes calldata _ownerToRemove) function. This would avoid the sitations outlined above where when calling removeOwnerAtIndex removes different owners on different chains. To ensure replayability and avoid having a stuck nonce on chains where _ownerToRemove is not an owner the function should not revert in the case the owner is not there, but instead return a bool removed to indicate whether an owner was removed or not.
+
+            This would make it significantly less likely that users run into the issues stated above, without having to limit their freedom to make ownership changes manually or via ERC-4337 EntryPoint transactions.
+        `,
+        500,
+        ["o1-preview", "chatgpt-4o-latest"],
+        dedent`
+            ## Additional Context
+
+            ### Basic Q/A:
+            Q: Which blockchains will this code be deployed to, and are considered in scope for this audit?
+            A: We have near-term plans to deploy this code to the mainnets of the following chains: Ethereum, Base, Optimism, Arbitrum, Polygon, BNB, Avalanche, Gnosis.
+
+            ### Roles/Permissions:
+            - SmartWallet
+                - Only owner or self
+                    - MultiOwnable.addOwnerAddress
+                    - MultiOwnable.addOwnerPublicKey
+                    - MultiOwnable.AddOwnerAddressAtIndex
+                    - MultiOwnable.addOwnerPublicKeyAtIndex
+                    - MultiOwnable.removeOwnerAtIndex
+                    - UUPSUpgradable.upgradeToAndCall
+                - Only EntryPoint, owner, or self
+                    - CoinbaseSmartWallet.execute
+                    - CoinbaseSmartWallet.executeBatch
+                - Only EntryPoint
+                    - CoinbaseSmartWallet.executeWithoutChainIdValidation
+                    - validateUserOp
+            - MagicSpend
+                - Only owner
+                    - ownerWithdraw
+                    - entryPointDeposit
+                    - entryPointWithdraw
+                    - entryPointAddStake
+                    - entryPointUnlockStake
+                    - entryPointWithdrawStake
+
+            ### ERC/EIP Compliance:
+            - ERC1271: Should comply with ERC1271
+            - CoinbaseSmartWalletFactory: Should comply with factory behavior defined in ERC4337
+            - CoinbaseSmartWallet: Should comply with account behavior defined in ERC4337
+            - MagicSpend: Should comply with paymaster behavior defined in ERC4337
+
+            ## Invariants
+            - SmartWallet
+                - Only current owners or EntryPoint can make calls that
+                    - Decrease account balance.
+                    - Add or remove owner.
+                    - Upgrade account.
+                - Any current owner can add or remove any other owner.
+            - MagicSpend
+                - Only owner can
+                    - Move funds from contract without a valid WithdrawRequest.
+                    - Stake and unstake in EntryPoint.
+                    - Add and withdraw from EntryPoint balance.
+                - Every WithdrawRequest can only be used once.
+                - A WithdrawRequest cannot be used past WithdrawRequest.expiry.
+                - Withdrawers can never receive more than WithdrawRequest.amount.
+                - Withdrawers using paymaster functionality should receive exactly WithdrawRequest.amount - postOp_actualGasCost.
+                - At the end of a transaction, _withdrawableETH contains no non-zero balances.
+            - WebAuthn
+                - Validation passes if and only if
+                    - '"challenge":""<challenge>" occurs in clientDataJSON starting at challengeIndex.
+                    - '"type":"webauth.get" is occurs in clientDataJSON starting at typeIndex.
+                    - User presence bit is set.
+                    - User verified bit is set, if required.
+                    - r and s are valid signature values for x, y on the message hash that results from clientDataJSON and authenticatorData.
+            - FreshCryptoLib
+                - All calls with valid sets of message, r, s, Qx, and Qy for the secp256r1 curve should return true.
+                - All calls with invalid sets of message, r, s, Qx, and Qy for the secp256r1 curve should revert or return false.
+        `,
+        dedent`
+            ## Overview:
+            - SmartWallet is a smart contract wallet. In addition to Ethereum address owners, it supports passkey owners and validates their signatures via WebAuthnSol. It supports multiple owners and allows for signing account-changing user operations such that they can be replayed across any EVM chain where the account has the same address. It is ERC-4337 compliant and can be used with paymasters such as MagicSpend.
+
+            - WebAuthnSol is a library for verifying WebAuthn Authentication Assertions onchain.
+
+            - FreshCryptoLib is an excerpt from FreshCryptoLib, including the function ecdsa_verify and all code this function depends on. ecdsa_verify is used by WebAuthnSol onchains without the RIP-7212 verifier, and FCL.n is used to check for signature malleability.
+
+            - MagicSpend is a contract that allows for signature-based withdraws. MagicSpend is a EntryPoint v0.6 compliant paymaster and also allows using withdraws to pay transaction gas, in this way.
+        `
+    ); */
 
     // Truflation
     /* const truflationTask = llmAnalyzer.analv1Backtrack(
@@ -660,7 +808,7 @@ const main = async () => {
         dedent`The definitive reference point for RWA, Indexes, & Inflation.`
     ); */
 
-    await Promise.all([saffronTask, sophonTask]);
+    // await Promise.all([saffronTask, sophonTask]);
 
     // Gamma
     /* const gammaTask = llmAnalyzer.analv1Backtrack(

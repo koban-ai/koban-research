@@ -22,6 +22,9 @@ To check the correctness of the found vulnerabilities, we use the `backtracking`
 - hats-protocol
     - [Audit](./reports/hats-protocol/)
     - [Contest](https://audits.sherlock.xyz/contests/614?filter=questions)
+- coinbase-smart-wallet
+    - [Audit](./reports/coinbase-smart-wallet/)
+    - [Contest](https://code4rena.com/audits/2024-03-smart-wallet)
 
 ## Architecture
 
