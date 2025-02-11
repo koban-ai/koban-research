@@ -437,6 +437,13 @@ const main = async () => {
     }
     const coinbaseScope = coinbaseScopeResult.return;
 
+    const ecoScopeResult = await FileScopeExtractor.load(ecoProtocolScopeFiles);
+    if (!ecoScopeResult.success) {
+        console.error("Can't load scope");
+        return;
+    }
+    const ecoScope = ecoScopeResult.return;
+
     /* const targetContractsResult = scope.getContracts([
         // "SafeERC20",
         // "VaultAccountingLibrary",
@@ -967,8 +974,8 @@ const main = async () => {
     ); */
 
     // Eco 1st high
-    /* await llmAnalyzer.analv1Backtrack(
-        scope,
+    await llmAnalyzer.analv1Backtrack(
+        ecoScope,
         "eco",
         dedent`
             # Malicious actor cause rebase to an old inflation multiplier
@@ -1017,7 +1024,7 @@ const main = async () => {
 
             Eco Routes provide developers with secure and cheap token transfer pathways between any other rollup settling on Ethereum (L2 or L3), with a network of fillers providing on-demand liquidity. Eco Accounts provides developers with a seamless way to manage cross-chain accounts with chain-abstracted balances, making it easy to support cross-chain interactions. The Eco Network will eventually aggregate liquidity to make it easy for app developers to provide users with more intuitive and cost-minimized onchain experiences denominated in stablecoins.
         `
-    ); */
+    );
 
     // Eco 2nd high
     /* await llmAnalyzer.analv1Backtrack(
